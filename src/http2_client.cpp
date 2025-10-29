@@ -6,20 +6,20 @@
 
 namespace spiffe {
 
-std::vector<uint8_t> Http2Frame::create_data_frame(const std::vector<uint8_t>& payload, bool end_stream) {
+Buffer Http2Frame::create_data_frame(const Buffer& payload, bool end_stream) {
     // For simplicity, we'll let curl handle HTTP/2 framing
     // This is just a placeholder implementation
     return payload;
 }
 
-bool Http2Frame::parse_data_frame(const std::vector<uint8_t>& frame_data, std::vector<uint8_t>& payload) {
+bool Http2Frame::parse_data_frame(const Buffer& frame_data, Buffer& payload) {
     // For simplicity, we'll let curl handle HTTP/2 framing
     payload = frame_data;
     return true;
 }
 
-std::vector<uint8_t> GrpcFraming::pack_message(const std::vector<uint8_t>& message) {
-    std::vector<uint8_t> result;
+Buffer GrpcFraming::pack_message(const Buffer& message) {
+    Buffer result;
     result.reserve(5 + message.size());
 
     // gRPC message format:
@@ -37,7 +37,7 @@ std::vector<uint8_t> GrpcFraming::pack_message(const std::vector<uint8_t>& messa
     return result;
 }
 
-bool GrpcFraming::unpack_message(const std::vector<uint8_t>& grpc_data, std::vector<uint8_t>& message) {
+bool GrpcFraming::unpack_message(const Buffer& grpc_data, Buffer& message) {
     if (grpc_data.size() < 5) {
         return false;
     }
@@ -57,7 +57,7 @@ bool GrpcFraming::unpack_message(const std::vector<uint8_t>& grpc_data, std::vec
     return true;
 }
 
-bool GrpcFraming::has_complete_message(const std::vector<uint8_t>& buffer, size_t& message_size) {
+bool GrpcFraming::has_complete_message(const Buffer& buffer, size_t& message_size) {
     if (buffer.size() < 5) {
         return false;
     }

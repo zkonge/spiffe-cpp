@@ -1,6 +1,7 @@
 #pragma once
 
 #include <curl/curl.h>
+#include <spiffe/types.h>
 
 #include <functional>
 #include <memory>
@@ -18,7 +19,7 @@ struct GrpcMetadata {
 // Pure response data (without status information)
 class GrpcResponse {
    public:
-    std::vector<uint8_t> data;
+    Buffer data;
     std::vector<GrpcMetadata> metadata;
 
     bool has_data() const { return !data.empty(); }
@@ -61,7 +62,7 @@ class GrpcClient {
     GrpcResult call(                                    //
         const std::string& service,                     //
         const std::string& method,                      //
-        const std::vector<uint8_t>& request_data,       //
+        const Buffer& request_data,                     //
         const std::vector<GrpcMetadata>& metadata = {}  //
     );
 
@@ -69,9 +70,19 @@ class GrpcClient {
     GrpcStatus call_stream(                                          //
         const std::string& service,                                  //
         const std::string& method,                                   //
-        const std::vector<uint8_t>& request_data,                    //
+        const Buffer& request_data,                                  //
         std::function<GrpcStatus(const GrpcResponse&)> on_response,  //
         const std::vector<GrpcMetadata>& metadata = {}               //
+    );
+
+    // Server streaming call with cancellation support - returns final status
+    GrpcStatus call_stream(                                          //
+        const std::string& service,                                  //
+        const std::string& method,                                   //
+        const Buffer& request_data,                                  //
+        std::function<GrpcStatus(const GrpcResponse&)> on_response,  //
+        const std::vector<GrpcMetadata>& metadata,                   //
+        const CancelContext* cancel                                  //
     );
 
    private:
@@ -84,19 +95,10 @@ class GrpcClient {
     struct curl_slist* build_headers(const std::vector<GrpcMetadata>& metadata);
     GrpcStatus extract_grpc_status(CURL* curl);
 
-    // Callback data structure for streaming
-    struct StreamCallbackData {
-        std::function<GrpcStatus(const GrpcResponse&)> on_response;
-        GrpcStatus last_status;  // for user to filling last status, and passing to original call_stream result
-
-        std::vector<uint8_t> buffer;
-        bool in_message = false;
-        uint32_t message_length = 0;
-        size_t bytes_read = 0;
-    };
-
     static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp);
     static size_t stream_write_callback(void* contents, size_t size, size_t nmemb, void* userp);
+    static int xferinfo_callback(void* clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal,
+                                 curl_off_t ulnow);
 };
 
 }  // namespace spiffe

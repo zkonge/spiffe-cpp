@@ -15,9 +15,19 @@
 namespace spiffe {
 
 struct ResponseData {
-    std::vector<uint8_t> data;
+    Buffer data;
     std::vector<GrpcMetadata> headers;
     long response_code = 0;
+};
+
+struct StreamCallbackData {
+    std::function<GrpcStatus(const GrpcResponse&)> on_response;
+    GrpcStatus last_status;  // for user to filling last status, and passing to original call_stream result
+
+    Buffer buffer;
+    bool in_message = false;
+    uint32_t message_length = 0;
+    size_t bytes_read = 0;
 };
 
 size_t GrpcClient::write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
@@ -45,13 +55,13 @@ size_t GrpcClient::stream_write_callback(void* contents, size_t size, size_t nme
         }
 
         // Extract the complete message
-        std::vector<uint8_t> grpc_message(stream_data->buffer.begin(), stream_data->buffer.begin() + message_size);
+        Buffer grpc_message(stream_data->buffer.begin(), stream_data->buffer.begin() + message_size);
 
         // Remove processed message from buffer
         stream_data->buffer.erase(stream_data->buffer.begin(), stream_data->buffer.begin() + message_size);
 
         // Unpack the message
-        std::vector<uint8_t> proto_message;
+        Buffer proto_message;
         if (GrpcFraming::unpack_message(grpc_message, proto_message)) {
             GrpcResponse response;
             response.data = proto_message;
@@ -108,6 +118,9 @@ void GrpcClient::setup_curl() {
 
     // Disable Expect: 100-continue header
     curl_easy_setopt(curl_, CURLOPT_EXPECT_100_TIMEOUT_MS, 0L);
+
+    // Disable signal handling for multi-threaded environments
+    curl_easy_setopt(curl_, CURLOPT_NOSIGNAL, 1L);
 }
 
 std::string GrpcClient::build_url(const std::string& service, const std::string& method) {
@@ -136,8 +149,8 @@ struct curl_slist* GrpcClient::build_headers(const std::vector<GrpcMetadata>& me
     return headers;
 }
 
-GrpcResult GrpcClient::call(const std::string& service, const std::string& method,
-                            const std::vector<uint8_t>& request_data, const std::vector<GrpcMetadata>& metadata) {
+GrpcResult GrpcClient::call(const std::string& service, const std::string& method, const Buffer& request_data,
+                            const std::vector<GrpcMetadata>& metadata) {
     std::lock_guard<std::mutex> lock(curl_mutex_);  // Protect curl handle
 
     if (!curl_) {
@@ -145,7 +158,7 @@ GrpcResult GrpcClient::call(const std::string& service, const std::string& metho
     }
 
     // Prepare gRPC framed message
-    std::vector<uint8_t> grpc_message = GrpcFraming::pack_message(request_data);
+    Buffer grpc_message = GrpcFraming::pack_message(request_data);
 
     // Setup request
     std::string url = build_url(service, method);
@@ -194,7 +207,7 @@ GrpcResult GrpcClient::call(const std::string& service, const std::string& metho
     GrpcResponse response;
 
     // Unpack gRPC message
-    std::vector<uint8_t> proto_message;
+    Buffer proto_message;
     if (GrpcFraming::unpack_message(response_data.data, proto_message)) {
         response.data = proto_message;
     } else {
@@ -204,8 +217,7 @@ GrpcResult GrpcClient::call(const std::string& service, const std::string& metho
     return GrpcResult(response);
 }
 
-GrpcStatus GrpcClient::call_stream(const std::string& service, const std::string& method,
-                                   const std::vector<uint8_t>& request_data,
+GrpcStatus GrpcClient::call_stream(const std::string& service, const std::string& method, const Buffer& request_data,
                                    std::function<GrpcStatus(const GrpcResponse&)> on_response,
                                    const std::vector<GrpcMetadata>& metadata) {
     std::lock_guard<std::mutex> lock(curl_mutex_);  // Protect curl handle
@@ -215,7 +227,7 @@ GrpcStatus GrpcClient::call_stream(const std::string& service, const std::string
     }
 
     // Prepare gRPC framed message
-    std::vector<uint8_t> grpc_message = GrpcFraming::pack_message(request_data);
+    Buffer grpc_message = GrpcFraming::pack_message(request_data);
 
     // Setup request
     std::string url = build_url(service, method);
@@ -244,6 +256,81 @@ GrpcStatus GrpcClient::call_stream(const std::string& service, const std::string
     if (!stream_data.last_status.is_ok()) {
         // If the last status is not OK, return it
         return stream_data.last_status;
+    }
+
+    if (res != CURLE_OK) {
+        return GrpcStatus{.code = 13, .message = curl_easy_strerror(res)};
+    }
+
+    // Check HTTP response code
+    long response_code;
+    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &response_code);
+
+    if (response_code != 200) {
+        return GrpcStatus{.code = 13, .message = "HTTP error: " + std::to_string(response_code)};
+    }
+
+    // Extract and return gRPC status
+    return extract_grpc_status(curl_);
+}
+
+int GrpcClient::xferinfo_callback(void* clientp, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/, curl_off_t /*ultotal*/,
+                                  curl_off_t /*ulnow*/) {
+    const CancelContext* cancel = static_cast<const CancelContext*>(clientp);
+    if (cancel && cancel->canceled()) {
+        return 1;  // non-zero to abort transfer; libcurl => CURLE_ABORTED_BY_CALLBACK
+    }
+    return 0;
+}
+
+GrpcStatus GrpcClient::call_stream(const std::string& service, const std::string& method, const Buffer& request_data,
+                                   std::function<GrpcStatus(const GrpcResponse&)> on_response,
+                                   const std::vector<GrpcMetadata>& metadata, const CancelContext* cancel) {
+    std::lock_guard<std::mutex> lock(curl_mutex_);  // Protect curl handle
+
+    if (!curl_) {
+        return GrpcStatus{.code = 13, .message = "cURL not initialized"};
+    }
+
+    // Prepare gRPC framed message
+    Buffer grpc_message = GrpcFraming::pack_message(request_data);
+
+    // Setup request
+    std::string url = build_url(service, method);
+    curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl_, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl_, CURLOPT_POSTFIELDS, grpc_message.data());
+    curl_easy_setopt(curl_, CURLOPT_POSTFIELDSIZE, grpc_message.size());
+
+    // Setup headers
+    struct curl_slist* headers = build_headers(metadata);
+    curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, headers);
+
+    // Setup streaming callback
+    StreamCallbackData stream_data;
+    stream_data.on_response = on_response;
+
+    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, stream_write_callback);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &stream_data);
+
+    // Setup cancellation via progress callback
+    curl_easy_setopt(curl_, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl_, CURLOPT_XFERINFOFUNCTION, xferinfo_callback);
+    curl_easy_setopt(curl_, CURLOPT_XFERINFODATA, const_cast<CancelContext*>(cancel));
+
+    // Perform the request
+    CURLcode res = curl_easy_perform(curl_);
+
+    // Cleanup headers
+    curl_slist_free_all(headers);
+
+    if (!stream_data.last_status.is_ok()) {
+        // If the last status is not OK, return it
+        return stream_data.last_status;
+    }
+
+    if (res == CURLE_ABORTED_BY_CALLBACK) {
+        return GrpcStatus{.code = 1, .message = "user canceled"};
     }
 
     if (res != CURLE_OK) {

@@ -2,13 +2,14 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace spiffe {
 
-using Buffer = std::vector<std::uint8_t>;
+using Buffer = std::vector<uint8_t>;
 
 using TrustDomain = std::string;
 using X509CertificateChain = std::vector<Buffer>;
@@ -43,6 +44,16 @@ struct JwtSvid {
 
 struct JwtBundles {
     std::unordered_map<TrustDomain, std::string> bundles;
+};
+
+// Simple cancellation token for aborting long-running/streaming operations
+class CancelContext {
+   public:
+    void cancel() { canceled_.store(true, std::memory_order_relaxed); }
+    bool canceled() const { return canceled_.load(std::memory_order_relaxed); }
+
+   private:
+    std::atomic<bool> canceled_{false};
 };
 
 }  // namespace spiffe

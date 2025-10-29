@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(CURL REQUIRED)
 
-add_library(spiffe STATIC src/status.cpp src/der.h src/grpc_client.cpp src/http2_client.cpp src/spiffe.cpp)
+add_library(spiffe SHARED src/status.cpp src/der.cpp src/grpc_client.cpp src/http2_client.cpp src/spiffe.cpp)
 
 target_link_libraries(spiffe PRIVATE ${CURL_LIBRARIES} -lpthread -ldl)
 target_include_directories(spiffe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include PRIVATE ${CURL_INCLUDE_DIRS})

@@ -1,5 +1,7 @@
 #include "der.h"
 
+#include <spiffe/types.h>
+
 namespace spiffe {
 
 TlvResult read_der_tlv(const uint8_t* der, size_t size) {
@@ -64,11 +66,11 @@ SplitCertResult split_cert(const uint8_t* raw, size_t size) {
         return SplitCertResult();
     }
 
-    std::string cert(reinterpret_cast<const char*>(raw), result.consumed);
+    Buffer cert(raw, raw + result.consumed);
     return SplitCertResult(result.consumed, cert);
 }
 
-CertificateIter::CertificateIter(const std::vector<uint8_t>& data)
+CertificateIter::CertificateIter(const Buffer& data)
     : der_data(data), current_pos(0), error_occurred(false) {}
 
 CertificateIter::CertificateIter(const uint8_t* data, size_t size)
@@ -84,9 +86,9 @@ bool CertificateIter::has_next() const { return current_pos < der_data.size() &&
 
 bool CertificateIter::has_error() const { return error_occurred; }
 
-std::string CertificateIter::next() {
+Buffer CertificateIter::next() {
     if (current_pos >= der_data.size() || error_occurred) {
-        return std::string();
+        return {};
     }
 
     const uint8_t* current_data = der_data.data() + current_pos;
@@ -95,18 +97,18 @@ std::string CertificateIter::next() {
     SplitCertResult result = split_cert(current_data, remaining_size);
     if (!result.valid) {
         error_occurred = true;
-        return std::string();
+        return {};
     }
 
     current_pos += result.consumed;
     return result.cert;
 }
 
-std::vector<std::string> CertificateIter::collect() {
-    std::vector<std::string> certs;
+std::vector<Buffer> CertificateIter::collect() {
+    std::vector<Buffer> certs;
 
     while (has_next()) {
-        std::string cert = next();
+        Buffer cert = next();
         if (cert.empty()) {
             break;
         }
@@ -140,20 +142,12 @@ size_t CertificateIter::count() const {
     return cert_count;
 }
 
-CertificateIter split_certificates(const std::vector<uint8_t>& der) { return CertificateIter(der); }
+std::vector<Buffer> extract_all_certificates(const Buffer& der) { return CertificateIter(der).collect(); }
 
-CertificateIter split_certificates(const uint8_t* data, size_t size) { return CertificateIter(data, size); }
-
-CertificateIter split_certificates(const std::string& der) { return CertificateIter(der); }
-
-std::vector<std::string> extract_all_certificates(const std::vector<uint8_t>& der) {
-    return CertificateIter(der).collect();
-}
-
-std::vector<std::string> extract_all_certificates(const uint8_t* data, size_t size) {
+std::vector<Buffer> extract_all_certificates(const uint8_t* data, size_t size) {
     return CertificateIter(data, size).collect();
 }
 
-std::vector<std::string> extract_all_certificates(const std::string& der) { return CertificateIter(der).collect(); }
+std::vector<Buffer> extract_all_certificates(const std::string& der) { return CertificateIter(der).collect(); }
 
 }  // namespace spiffe

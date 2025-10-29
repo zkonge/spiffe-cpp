@@ -20,8 +20,11 @@ std::string toHex(const std::uint8_t* data, size_t size) {
 int main() {
     spiffe::SpiffeWorkloadApiClient client("/tmp/spire-agent/public/api.sock");
 
+    spiffe::Status status;
+
+    // Fetch JWT SVIDs
     std::vector<spiffe::JwtSvid> svids;
-    auto status = client.fetch_jwt_svid(svids, {"zti"});
+    status = client.fetch_jwt_svid(svids, {"zti"});
 
     std::cout << "Status: " << status.code_str() << ", Message: " << status.message << std::endl;
 
@@ -31,13 +34,51 @@ int main() {
         std::cout << "Hint: " << svid.hint << std::endl;
     }
 
+    // Fetch JWT Bundles
     status = client.fetch_jwt_bundles([](const spiffe::JwtBundles& bundles) {
         std::cout << "JWT Bundles:" << std::endl;
         for (const auto& bundle : bundles.bundles) {
             std::cout << "TrustDomain: " << bundle.first << std::endl;
             std::cout << "Bundle: " << bundle.second << std::endl;
         }
-        return spiffe::Status{.code = 1, .message = "simulate error"};
+        return spiffe::Status{.code = 1, .message = "user canceled"};
+    });
+
+    std::cout << "Status: " << status.code_str() << ", Message: " << status.message << std::endl;
+
+    // Fetch X.509 Bundles
+    status = client.fetch_x509_bundles([](const spiffe::X509BundlesContext& bundles) {
+        std::cout << "X.509 Bundles:" << std::endl;
+        for (auto& bundle : bundles.bundles) {
+            std::cout << "TrustDomain: " << bundle.first << std::endl;
+            std::cout << "Bundle contains:" << std::endl;
+            for (const auto& cert : bundle.second) {
+                std::cout << "  Cert (hex): " << toHex(cert.data(), cert.size()) << std::endl;
+            }
+        }
+        return spiffe::Status{.code = 1, .message = "user canceled"};
+    });
+
+    std::cout << "Status: " << status.code_str() << ", Message: " << status.message << std::endl;
+
+    // Fetch X.509 SVIDs
+    status = client.fetch_x509_svid([](const spiffe::X509SvidContext& svid_context) {
+        std::cout << "X.509 SVIDs:" << std::endl;
+        for (const auto& svid : svid_context.svids) {
+            std::cout << "SPIFFE ID: " << svid.spiffe_id << std::endl;
+            std::cout << "X.509 SVID contains:" << std::endl;
+            for (const auto& cert : svid.x509_svid) {
+                std::cout << "  Cert (hex): " << toHex(cert.data(), cert.size()) << std::endl;
+            }
+            std::cout << "X.509 SVID Key (hex): " << toHex(svid.x509_svid_key.data(), svid.x509_svid_key.size())
+                      << std::endl;
+            std::cout << "Bundle contains:" << std::endl;
+            for (const auto& cert : svid.bundle) {
+                std::cout << "  Cert (hex): " << toHex(cert.data(), cert.size()) << std::endl;
+            }
+            std::cout << "Hint: " << svid.hint << std::endl;
+        }
+        return spiffe::Status{.code = 1, .message = "user canceled"};
     });
 
     std::cout << "Status: " << status.code_str() << ", Message: " << status.message << std::endl;

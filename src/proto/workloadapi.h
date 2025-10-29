@@ -1,17 +1,18 @@
 #pragma once
 
+#include <cstring>  // SimpleProtos.h requires stdlib.h
+#include <cstdint>
+
 // DO NOT EXPOSE ME, OR YOU WILL POLLUTE NAMESPACE
 #include <SimpleProtos.h>
-
-#include <cstring>  // SimpleProtos.h requires stdlib.h
 
 namespace spiffe {
 
 // ProtoMessage is the polyfill for protobuf 3
 struct ProtoMapItem {
     FIELDS(                     //
-        FIELD_BUFFER(1, key)    // buffer
-        FIELD_BUFFER(2, value)  // buffer
+        FIELD_BUFFER(1, key)    // string
+        FIELD_BUFFER(2, value)  // string
     )
 
     ADD_FIELD_OPTIONAL(std::string, key);
@@ -104,23 +105,23 @@ struct ProtoJwtBundlesRequest {
 
 struct ProtoJwtBundlesResponse {
     FIELDS(                                 //
-        REPEATED_FIELD_MESSAGE(1, bundles)  // repeated bytes
+        REPEATED_FIELD_MESSAGE(1, bundles)  //  map<string, string>
     )
 
     ADD_FIELD_OPTIONAL(std::vector<ProtoMapItem>, bundles);
 };
 
 template <typename ProtoMessage>
-std::vector<std::uint8_t> encode_proto_message(ProtoMessage& message) {
+std::vector<uint8_t> encode_proto_message(ProtoMessage& message) {
     auto writer = message.serialize();
-    std::vector<std::uint8_t> buffer(writer->m_buf, writer->m_buf + writer->m_pos);
+    std::vector<uint8_t> buffer(writer->m_buf, writer->m_buf + writer->m_pos);
     delete writer;
 
     return buffer;
 }
 
 template <typename ProtoMessage>
-bool decode_proto_message(std::vector<std::uint8_t>& buffer, ProtoMessage& message) {
+bool decode_proto_message(std::vector<uint8_t>& buffer, ProtoMessage& message) {
     return message.deserialize(buffer.data(), buffer.size());
 }
 
