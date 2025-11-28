@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#define PROTO_PRINTER 1
+#define PROTO_PRINTER 0
 #ifdef _WIN32
 #define LONG_INTEGER_FORMAT "%lli"
 #define LONG_HEX_FORMAT "%llx"

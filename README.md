@@ -15,7 +15,7 @@ Still under development, do not use it.
 ## Implemented
 - [x] `FetchJWTSVID`.
 - [x] `FetchJWTBundles`.
-- [ ] `FetchX509SVID`.
-- [ ] `FetchX509Bundles`.
+- [x] `FetchX509SVID`.
+- [x] `FetchX509Bundles`.
 - [ ] `SPIFFE ID` validator.
 - [ ] user guide.

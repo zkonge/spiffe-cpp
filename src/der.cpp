@@ -3,6 +3,8 @@
 namespace spiffe {
 
 TlvResult read_der_tlv(const uint8_t* der, size_t size) {
+    // TODO: audit me
+    // This is a critical function for security; make sure all boundary conditions are handled correctly.
     if (size < 2) {
         return TlvResult();
     }
@@ -19,9 +21,9 @@ TlvResult read_der_tlv(const uint8_t* der, size_t size) {
         }
 
         size_t value_len = first_len_byte;
-        size_t total_consumed = 2 + value_len;
+        size_t total_len = 2 + value_len;
 
-        return TlvResult(total_consumed, Tlv(tag, rem, value_len));
+        return TlvResult(total_len, Tlv(tag, value_len, rem));
     }
 
     // long form length
@@ -47,6 +49,7 @@ TlvResult read_der_tlv(const uint8_t* der, size_t size) {
             len = (static_cast<size_t>(len_bytes[0]) << 16) | (static_cast<size_t>(len_bytes[1]) << 8) | len_bytes[2];
             break;
         default:
+            // Is it possible to have a certificate that lengths longer than 2**23 bytes?
             return TlvResult();
     }
 
@@ -54,59 +57,42 @@ TlvResult read_der_tlv(const uint8_t* der, size_t size) {
         return TlvResult();
     }
 
-    size_t total_consumed = 2 + len_len + len;
-    return TlvResult(total_consumed, Tlv(tag, rem, len));
+    size_t total_len = 2 + len_len + len;
+    return TlvResult(total_len, Tlv(tag, len, rem));
 }
-
-SplitCertResult split_cert(const uint8_t* raw, size_t size) {
-    TlvResult result = read_der_tlv(raw, size);
-    if (!result.valid || result.tlv.tag != 0x30) {
-        return SplitCertResult();
-    }
-
-    std::string cert(reinterpret_cast<const char*>(raw), result.consumed);
-    return SplitCertResult(result.consumed, cert);
-}
-
-CertificateIter::CertificateIter(const std::vector<uint8_t>& data)
-    : der_data(data), current_pos(0), error_occurred(false) {}
 
 CertificateIter::CertificateIter(const uint8_t* data, size_t size)
     : der_data(data, data + size), current_pos(0), error_occurred(false) {}
-
-CertificateIter::CertificateIter(const std::string& data)
-    : der_data(reinterpret_cast<const uint8_t*>(data.data()),
-               reinterpret_cast<const uint8_t*>(data.data()) + data.size()),
-      current_pos(0),
-      error_occurred(false) {}
 
 bool CertificateIter::has_next() const { return current_pos < der_data.size() && !error_occurred; }
 
 bool CertificateIter::has_error() const { return error_occurred; }
 
-std::string CertificateIter::next() {
+Buffer CertificateIter::next() {
     if (current_pos >= der_data.size() || error_occurred) {
-        return std::string();
+        return {};
     }
 
+    // boundary safety: we have already checked boundaries in read_der_tlv
     const uint8_t* current_data = der_data.data() + current_pos;
     size_t remaining_size = der_data.size() - current_pos;
 
-    SplitCertResult result = split_cert(current_data, remaining_size);
-    if (!result.valid) {
+    TlvResult result = read_der_tlv(current_data, remaining_size);
+    if (!result.valid || result.tlv.tag != 0x30) {
         error_occurred = true;
-        return std::string();
+        return {};
     }
 
-    current_pos += result.consumed;
-    return result.cert;
+    Buffer cert(current_data, current_data + result.tlv_len);
+    current_pos += result.tlv_len;
+    return cert;
 }
 
-std::vector<std::string> CertificateIter::collect() {
-    std::vector<std::string> certs;
+std::vector<Buffer> CertificateIter::collect() {
+    std::vector<Buffer> certs;
 
     while (has_next()) {
-        std::string cert = next();
+        Buffer cert = next();
         if (cert.empty()) {
             break;
         }
@@ -116,44 +102,16 @@ std::vector<std::string> CertificateIter::collect() {
     return certs;
 }
 
-size_t CertificateIter::count() const {
-    if (error_occurred) {
-        return 0;
-    }
-
-    size_t cert_count = 0;
-    size_t pos = current_pos;
-
-    while (pos < der_data.size()) {
-        const uint8_t* data = der_data.data() + pos;
-        size_t remaining = der_data.size() - pos;
-
-        SplitCertResult result = split_cert(data, remaining);
-        if (!result.valid) {
-            break;
-        }
-
-        cert_count++;
-        pos += result.consumed;
-    }
-
-    return cert_count;
-}
-
-CertificateIter split_certificates(const std::vector<uint8_t>& der) { return CertificateIter(der); }
-
-CertificateIter split_certificates(const uint8_t* data, size_t size) { return CertificateIter(data, size); }
-
-CertificateIter split_certificates(const std::string& der) { return CertificateIter(der); }
-
-std::vector<std::string> extract_all_certificates(const std::vector<uint8_t>& der) {
-    return CertificateIter(der).collect();
-}
-
-std::vector<std::string> extract_all_certificates(const uint8_t* data, size_t size) {
+std::vector<Buffer> extract_all_certificates(const uint8_t* data, size_t size) {
     return CertificateIter(data, size).collect();
 }
 
-std::vector<std::string> extract_all_certificates(const std::string& der) { return CertificateIter(der).collect(); }
+std::vector<Buffer> extract_all_certificates(const Buffer& der) {
+    return CertificateIter(der.data(), der.size()).collect();
+}
+
+std::vector<Buffer> extract_all_certificates(const std::string& der) {
+    return CertificateIter(reinterpret_cast<const uint8_t*>(der.data()), der.size()).collect();
+}
 
 }  // namespace spiffe

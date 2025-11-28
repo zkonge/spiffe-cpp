@@ -8,7 +8,7 @@
 
 namespace spiffe {
 
-using Buffer = std::vector<std::uint8_t>;
+using Buffer = std::vector<uint8_t>;
 
 using TrustDomain = std::string;
 using X509CertificateChain = std::vector<Buffer>;
